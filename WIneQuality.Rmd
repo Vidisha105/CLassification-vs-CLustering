@@ -1,0 +1,231 @@
+
+# Wine Quality CLassification and Clustering
+
+```{r}
+df <- read.csv("winequality-red.csv")
+print(head(df))
+
+```
+The dataset is related to red variants of the Portuguese "Vinho Verde" wine, and it includes 12 variables including but not limited to sulfur dioxide, pH, density, and residual sugar. We found this dataset on kaggle, and it originates from the University of California Irvine Machine Learning Repository.  
+
+## EDA
+
+```{r}
+
+library(Hmisc)
+describe(df)
+summary(df)
+str(df)
+
+
+```
+Inference: There are no null values, mean varies eratically so we will need to standardize the data. There are total12 variables and 1599 observations.
+
+### Vizualization and distribution of each features
+```{r}
+df.predictors = scale(subset(df, select = -quality))
+
+boxplot(df.predictors, las=2)
+
+
+par(mfrow = c(3,4))
+cols = colnames(df)
+for (col in cols) {
+    hist(df[,col], main = col)
+}
+
+```
+Inference: Univariate Plots for each of the features. We see fixed acidity, volatile acidity, citric acid, residual sugar, chlorides, free sulphur dioxide, total sulphur di oxide, sulphates and alcohold are right skewed. Whereas density and pH are normally distributed.  
+
+
+### Treating Outliers
+
+We will remove the outliers for features with long tails like residual sugar, chlorides, total sulphur di oxide and sulphates. 
+```{r}
+## outlier sugar:
+Q <- quantile(df$residual.sugar, probs=c(.25, .75), na.rm = FALSE)
+
+iqr <- IQR(df$residual.sugar)
+
+up <-  Q[2]+1.5*iqr # Upper Range  
+low<- Q[1]-1.5*iqr # Lower Range
+
+df<- subset(df, df$residual.sugar > (Q[1] - 1.5*iqr) & df$residual.sugar < (Q[2]+1.5*iqr))
+
+#Chlorides:
+Q <- quantile(df$chlorides, probs=c(.25, .75), na.rm = FALSE)
+
+iqr <- IQR(df$chlorides)
+
+up <-  Q[2]+1.5*iqr # Upper Range  
+low<- Q[1]-1.5*iqr # Lower Range
+
+df<- subset(df, df$chlorides > (Q[1] - 1.5*iqr) & df$chlorides < (Q[2]+1.5*iqr))
+
+
+#Chlorides:
+Q <- quantile(df$total.sulfur.dioxide, probs=c(.25, .75), na.rm = FALSE)
+
+iqr <- IQR(df$total.sulfur.dioxide)
+
+up <-  Q[2]+1.5*iqr # Upper Range  
+low<- Q[1]-1.5*iqr # Lower Range
+
+df<- subset(df, df$total.sulfur.dioxide > (Q[1] - 1.5*iqr) & df$total.sulfur.dioxide < (Q[2]+1.5*iqr))
+
+
+df.predictors = scale(subset(df, select = -quality))
+
+boxplot(df.predictors, las=2)
+
+
+par(mfrow = c(3,4))
+cols = colnames(df)
+for (col in cols) {
+    hist(df[,col], main = col)
+}
+
+
+```
+
+### Checking correlation
+```{r}
+library("GGally")
+df %>% 
+  # correlation plot 
+  ggcorr(method = c('complete.obs','pearson'), 
+         nbreaks = 6, digits = 3, palette = "RdGy", label = TRUE, label_size = 3, 
+         label_color = "white", label_round = 2)
+```
+
+Inference: As a rule of thumb we don't take features with collinearity > 0.8. Since none of the features are correlated we take all the features.
+
+
+
+### Creating labels
+```{r}
+unique(df$quality)
+## Categorizing 3, 4 as low quality, 5,6 as medium quality and 7,8 as high quality
+library(dplyr)
+df2 <- df %>% 
+  mutate(quality_group = case_when(df$quality <= 4 ~ "low", 
+                               df$quality <= 6 ~ "medium",
+                               df$quality >= 7 ~ "high"))
+head(df2)
+
+```
+
+### Standardize the data
+```{r}
+## Using Standardization to normalize the data:
+df3<-scale(subset(df2, select = -c(quality_group)))
+df3 <- as.data.frame(df3)
+df3$quality_group <- df2$quality_group
+head(df3)
+```
+
+### Standardize the data
+```{r}
+library(caTools)
+
+set.seed(123)
+split = sample.split(df3$quality_group, SplitRatio = 0.80)
+training_set = subset(df3, split == TRUE)
+test_set = subset(df3, split == FALSE)
+```
+### Checking the balance in the dataset
+```{r}
+prop.table(table(training_set$quality_group))
+prop.table(table(test_set$quality_group))
+```
+
+
+
+### Multinomial Logistic regression classification
+```{r}
+library(nnet)
+
+model <- multinom(quality_group ~ ., data=training_set ,importance = TRUE)
+summary(model)
+```
+
+### Checking Accuracy
+```{r}
+#View(df)
+df_q3 <- df3
+df_q3$quality_group <- as.factor(df_q3$quality_group)
+levels(df_q3$quality_group)
+
+# Split the data
+set.seed(50)
+split_q3 <- sample(c(rep(0, 0.8 * nrow(df_q3)), rep(1, 0.2 * nrow(df_q3))))
+train_q3 <- df_q3[split == 0, ]
+test_q3 <- df_q3[split == 1, ]
+
+# Setting the reference level
+library(nnet)
+train_q3$quality_group <- relevel(train_q3$quality_group, ref = "low")
+
+# Training the multinominal classification model
+multinom_model <- multinom(quality_group ~ ., data = df_q3)
+summary(multinom_model)
+
+# Predicting the values for train dataset
+train_q3$ClassPredicted <- predict(multinom_model, newdata = train_q3, "class")
+
+# Building classification table
+tab_1 <- table(train_q3$quality_group, train_q3$ClassPredicted)
+tab_1
+# Calculating accuracy - sum of diagonal elements divided by total obs
+model_acc <- round((sum(diag(tab_1))/sum(tab_1))*100,2)
+model_acc
+
+# Predicting the class for test dataset
+test_q3$QualityPredicted <- predict(multinom_model, newdata = test_q3, "class")
+tab_2 <- table(test_q3$quality_group, test_q3$QualityPredicted)
+tab_2
+
+```
+
+Inference: Model Accuracy is 82.88% which means 82.8% of wine samples has been classified correctly.
+
+
+
+### k-means clustering
+
+Since k-means clustring is a supervised algorithm we will omit both quality and quality_group columns.
+```{r}
+##splitting data
+set.seed(50)
+split <- sample(c(rep(0, 0.8 * nrow(df3)), rep(1, 0.2 * nrow(df3))))
+train <- df[split == 0, ]
+test <- df[split == 1, ]
+
+
+#install.packages("factoextra")
+library(factoextra)
+
+xtrain <- train[,1:11]
+
+grp <- kmeans(xtrain, centers=3, nstart=50)
+# Initialize total within sum of squares error: wss
+wss <- 0
+
+for (i in 1:3) {
+  km.out <- kmeans(xtrain, centers = i)
+  # Save total within sum of squares to wss variable
+  wss[i] <- km.out$tot.withinss
+}
+plot(1:3, wss, type = "b", 
+     xlab = "Number of Clusters", 
+     ylab = "Within groups sum of squares")
+wss
+
+
+fviz_cluster(list(data = xtrain, cluster = grp$cluster),
+             ellipse.type = "norm", geom = "point", stand = FALSE,
+             palette = "jco", ggtheme = theme_classic())
+
+```
+
+Inference: Inference: The Dim 1 96.4% means that the first principle component accounts for 96.4% of the variation. The second principle component accounts for 2.3% of the variation. So together they account for 98.7% of the variation. Within the cluster sum of squared errors are: 759204.3 258565.1 141280.7
